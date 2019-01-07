@@ -1,0 +1,234 @@
+###Text mining Chapter 2.  Text Mining Basics###
+
+#Set Options
+options(stringsAsFactors = FALSE) #문자를 factor로 만들지 말라는 옵션을 먼저 설정함.
+Sys.getlocale() #현재의 locale 확인
+Sys.setlocale("LC_ALL", "C")
+
+
+#string manipulation에 필요한 package 불러오기
+library(stringi)
+library(stringr)
+library(qdap)
+
+
+#데이터 불러오기
+
+setwd( "C:/Users/dcng/Documents/text_mining-master")
+text.df <- read.csv("oct_delta.csv")
+
+
+#nchar 함수 : 1. string에서 문자 갯수를 반환. (공백은 세지 않는다!)
+nchar(head(text.df$text))
+nchar(text.df[4,5])
+
+#What is the average length of a social customer service reply? : 전체 트윗의 character 갯수의 평균 구하기
+mean(nchar(text.df$text))
+
+
+#nchar 함수 2. 길이가 0인 string을 뺀다.
+#길이가 0인 string 빼기
+subset.doc <- subset(text.df, nchar(text.df$text)>0)
+
+
+
+###Substitution
+
+#sub 함수: string에서 처음으로 나오는 특정 단어를 내가 원하는 단어로 바꿔줌.
+#첫 tweet의 Thanks 를  Thank you로 바꾸기
+sub("Thanks", "Thank you", text.df[1,5], ignore.case=T)
+#ignore.case=TRUE :  대소문자 구별 안함. 
+#Thanks라는 단어를 Thank you로 바꾸자.
+
+#sub의 또다른 기능: 벡터로 들어가기 때문에 column이 될 수 있다........?
+#행마다 첫번째로 나타나는 패턴을 바꿔준다. 
+text.df[1:5, 5]
+sub('pls', 'please', text.df[1:5, 5], ignore.case = F)
+#이 경우 2,3,4행에서 pls가 한 번씩 나오므로 3개의 행 모두 pls가 please로 바뀜.
+
+
+#gsub함수: string 안에 있는 모든 특정 단어들을 내가 원하는 단어로 바꿔줌. (sub는 맨 처음 하나만!)
+#punctuation 지울 때 많이 사용한다.
+fake.text <- 'R text mining is good but text mining in python is also'
+sub('text mining', 'tm', fake.text, ignore.case=F)
+gsub('text mining','tm', fake.text, ignore.case = F)
+=> gsub는 전체 corpus에서 원하는 단어를 뺄 때 유용하다.
+
+#다섯번째 행에서 &가 &amp로 pharsing됨 
+# 1. &amp 모두 없애기!
+gsub('&amp', '', text.df[5,5])
+
+#string안에 있는 모든 punctuation martk들 지울 때
+gsub('[[:punct:]]', '', text.df[1:5,5])
+
+#sub, gsub에서 ignore.case : 대문자, 소문자 구별할 건지. TRUE면 대소문자 상관안하고 같은걸로 본다.
+
+
+#qdap패키지의 mgsub: string 대체하는 것을 여러 단어를 한번에 교체할 수 있게 함. 
+#                   (multiple global substitutions) => 제일 좋은 방법!
+patterns <- c("good", "also", "text mining")
+replacements <- c("great", "just as suitable", "tm")
+#바꾸려는 현재 단어와 새로 바꾸고자 하는 단어가 대응해야함.
+mgsub(patterns, replacements, fake.text)
+
+
+
+
+##paste 함수 (년, 월, 일 column을 한 column으로 합치기)
+
+#먼저 월 변수를 숫자로 바꾸기기
+patterns <- c('Jan', 'Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec')
+replacements <- seq(1:12)
+text.df$month <- mgsub(patterns, replacements, text.df$month)
+
+#월,일,년 합치기
+text.df$combined <- paste(text.df$month, text.df$date, text.df$year,
+                          sep='-')
+
+#paste0 함수: separating character 없이 문자와 문자를 붙여줌.
+
+# lubridate 패키지: official date format으로 변환시켜줌.
+library(lubridate)
+text.df$combined <- mdy(text.df$combined)  mdy(월, 일, 년)
+
+
+#strsplit : creates subset strings 문자를 기준으로 string을 나눌 때
+text.df$text[1:2]
+#*를 기준으로 나누기
+agents <- strsplit(text.df$text, '[*]')
+#그냥 * 대신 [*]를 쓰는 이유: R에서 *이 가지는 다른 뜻이 있어서, * 자체를 문자로 인식하라고 넣어줌.
+agents[1:2]
+
+
+#substring: string의 일부만 뽑아오기
+substring("R text mining is great", 18, 22)
+#custom function last.chars : string의 마지막 n글자 뽑아내기. substring+nchar라고 볼 수 있다.
+last.chars <- function(text, num) {
+  last <- substr(text, nchar(text)-num+1, nchar(text))
+  return(last)
+}
+last.chars("R text mining is great", 5)
+last.chars(text.df$text[1:2],2)
+
+#10월 5일부터 9일까지 weekdays에 대한 분석
+weekdays <- subset(text.df, text.df$combined >= mdy('10-05-2015') &
+                     text.df$combined <= mdy('10-09-2015'))
+table(as.factor(last.chars(weekdays$text,2)))
+# => WG agent가 제일 바쁜 것을 알 수 있당!
+
+
+##grep 또는 grepl : regular expression pattern을 찾아줌.
+
+#grep: seached pattern의 위치를 알려준다. 
+grep('sorry', text.df$text, ignore.case = TRUE) #sorry를 포함하는 text 번호를 모두 불러온다
+
+#grepl: 특정 단어를 찾으면 각 행마다 들어가있는지 아닌지에 대해 TRUE(1)혹은 FALSE(0)로 나타내준다.
+sorry <- grepl('sorry', text.df$text, ignore.case=TRUE)
+sum(sorry)/nrow(text.df)  #전체 데이터에서 sorry가 들어간 행의 비율 구하
+
+grep(c('sorry|apologize'), text.df$text, ignore.case=TRUE) #여러개 단어 찾기
+
+sum(grepl('http', text.df$text, ignore.case=TRUE))/nrow(text.df)
+sum(grepl('[0-9]{3}|[0-9]{4}', text.df$text))/nrow(text.df) #번호가 들어있는지 찾기
+#            :0부터 9까지로 이루어진 3자리 또는 4자리 숫자를 찾아라.
+# => 하이퍼링크 걸려있는 트윗보다 폰번호 있는 트윗이 3배넘게 많음을 알 수 있다. 
+
+#핸드폰 전체를 잡고싶을 때
+#  [0-9]{3}-[0-9]{4}-[0-9]{4}
+#  [0-9] 는 \d 로도 표현할 수 있음.
+#문자 바로 옆에 숫자 있는 경우를 뽀븡ㄹ 때
+#  [a-z0-9]
+#  ^[a-z0-9]{4,20}$ 알파벳이랑 숫자 붙여져 있는 4글자~20글자 string을 불러라.
+
+
+## String packages : stringr and stringi
+#stringi : 특정 단어가 하나의 트윗에서 몇 번 나왔는지 확인 가능
+library(stringi)
+stri_count(text.df$text, fixed='http') #stri_count : 각 행에 특정 단어를 몇번을 포함하는지 
+
+#'and'를 이용해서 단어를 찾고싶을 때 : stringr 패키지 이용
+library(stringr)
+str_detect(text.df$text, 'http') #str_detect : 모든 행에 대해 이 단어를 포함하면 TRUE, 없으면 FALSE
+#http와 DM이 둘 다 들어있는 트윗을 찾을 때
+patterns <- with(text.df, str_detect(text.df$text, 'http') & 
+                   str_detect(text.df$text, 'DM'))
+text.df[patterns, 5]
+
+
+##Preprocessing steps for Bag of words Text mining
+
+#set options
+options(stringsAsFactors = FALSE)
+Sys.setlocale("LC_ALL", "C")
+library(tm)
+library(stringi)
+
+#텍스트마이닝을 위한 새로운 데이터프레임 만들기(번호랑 텍스트만 있는 테이블)
+tweets <- data.frame(doc_id=seq(1:nrow(text.df)), text=text.df$text)
+#VCorpus를 이용할 때는 반드시 시리얼너버는 doc_id, 텍스트는 text라는 변수명을 갖고 있어야 함.
+
+
+#tryTolower 함수 만들기(에러가 나게 되는 부분을 NA값으로 바꿔줌)
+#tolower가 특수문자를 만나면 에러가 나오게 된다.
+tryTolower <- function(x) {
+  y=NA #return NA when there is an error(특수문자를 만나면 NA)
+  try_error=tryCatch(tolower(x), error=function(e) e) #tryCatch : 에러나면 에러 나온다고 반환해라.
+  if (!inherits(try_error, 'error'))
+    y=tolower(x)
+  return(y)
+}
+
+#Common English stopwords + 추가로 없애고자하는 단어들 지정하기
+#패키지에 English textmining할 때 그닥 필요없는 영어단어들을 stopwords('english')에 저장해둠.
+custom.stopwords <- c(stopwords('english'), 'lol','smh','delta')
+
+#preprocessing function 만들기 (앞에서 만든 tryTolower함수 포함)
+clean.corpus <- function(corpus) {
+  corpus <- tm_map(corpus,
+                   content_transformer(tryTolower))
+  corpus <- tm_map(corpus, removeWords, custom.stopwords)
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, stripWhitespace)
+  corpus <- tm_map(corpus, removeNumbers)
+  return(corpus)
+}
+
+corpus <- VCorpus(DataframeSource(tweets)) #변수명 doc_id와 text 확인!
+corpus <- clean.corpus(corpus)
+tm_map(corpus, removeNumbers, mc.cores=1)
+
+
+##spellcheck #나온 텍스트들에서 잘못된 spelling을 확인해줌.
+tm.definition <- 'Txt mining is the process of distilling actionable insyghts from text.'
+library(qdap)
+which_misspelled(tm.definition)
+check_spelling_interactive(tm.definition) 
+#각각의 오탈자에 대해 대체 문자를 제시해줌 => 맞는 단어를 고른다.
+
+#아주 큰 데이터를 가지고 misspelling 찾아낼 때.
+fix.text <- function(myStr) {
+  check <- check_spelling(myStr)
+  splitted <- strsplit(myStr, split='')
+  for (i in 1:length(check$row)) {
+    splitted[[check$row[i]]][as.numeric(check$word.no[i])] = check$suggestion[i]
+  }
+  df <- unlist(lapply(splitted, function(x) paste(x, collapse='')))
+  return(df)
+}
+
+fix.text(tm.definition)
+
+
+##Frequent Terms and Associations : TDM만들기
+
+#weighting=weightTf : 빈도수가 높은 단어들에 대해 가중치를 준다. 
+tdm <- TermDocumentMatrix(corpus, control=list(weighting=weightTf))
+tdm.tweets.m <- as.matrix(tdm)
+dim(tdm.tweets.m)
+#열 : observation, 행:단어 
+tdm.tweets.m[2250:2255, 1340:1342]
+term.freq <- rowSums(tdm.tweets.m)
+freq.df <- data.frame(word=names(term.freq), 
+                      frequency=term.freq)
+freq.df <- freq.df[order(freq.df[,2],decreasing=TRUE),]
+freq.df[1:10,]
