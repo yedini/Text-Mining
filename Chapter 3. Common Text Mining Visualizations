@@ -1,0 +1,229 @@
+##Chapter 3. Common Text Mining Visualizations###
+
+setwd('C:/Users/dcng/Documents/text_mining-master')
+
+options(stringsAsFactors = FALSE) 
+Sys.getlocale() 
+Sys.setlocale("LC_ALL", "C")
+
+##Term Frequency
+
+library(tidyverse)
+library(tm)
+library(ggthemes)
+
+#term frequency에 대한 bar plot 만들기
+text.df <- read.csv('oct_delta.csv')
+tweets <- data.frame(doc_id=seq(1:nrow(text.df)),
+                     text=text.df$text)
+tryTolower <- function(x) {
+  y=NA
+  try_error=tryCatch(tolower(x), error=function(e) e)
+  if (!inherits(try_error, 'error'))
+    y=tolower(x)
+  return(y)
+}
+
+custom.stopwords <- c(stopwords('english'), 'lol', 'smh', 'delta', 'amp')
+clean.corpus <- function(corpus) {
+  corpus <-tm_map(corpus, content_transformer(tryTolower))
+  corpus <- tm_map(corpus, removeWords, custom.stopwords)
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, stripWhitespace)
+  corpus <- tm_map(corpus, removeNumbers)
+  return(corpus)
+}
+corpus <- VCorpus(DataframeSource(tweets))
+corpus <- clean.corpus(corpus)
+tdm <- TermDocumentMatrix(corpus, control=list(weighting=weightTf))
+tdm.tweets.m <- as.matrix(tdm)
+term.freq <- rowSums(tdm.tweets.m)
+freq.df <- data.frame(word=names(term.freq), frequency=term.freq) %>%
+  arrange(desc(frequency))
+
+#각 단어를 factor화
+freq.df$word <- factor(freq.df$word, levels=unique(as.character(freq.df$word)))
+
+#barplot 그리기
+ggplot(freq.df[1:20,], aes(word, frequency))+
+  geom_bar(stat="identity", fill="darkred")+
+  coord_flip()+theme_gdocs()+ #x축이랑 y축 뒤집기 / theme_gdocs(ggtheme패키지): google visualization
+  geom_text(aes(label=frequency), colour="white", hjust=1.25, size=5.0)
+
+
+#word Associations
+associations <- findAssocs(tdm, 'apologies', 0.11) %>%   #tdm에서 apologies와 0.11이상 correlated한 단어 찾기
+                   as.data.frame()
+associations$terms <- row.names(associations) %>%
+  factor(levels=associations$terms)
+#association에 대한 dataframe와 ggplot을 통해 쉽게 visualization할 수 있다.
+ggplot(associations, aes(apologies, terms))+
+  geom_point(size=5) +
+  theme_gdocs() +
+  geom_text(aes(label=apologies), colour="darkred", hjust=-.25, size=8)+
+  theme(text=element_text(size=20),
+        axis.title.y=element_blank())
+
+
+#word networks
+#단어들간의 network만들기 => igraph 패키지 사용
+library(igraph)
+#데이터를 전체 다 쓰면 넘나 복잡해지므로 특정 단어와 관련된 network만 사용하기(여기서는 refund)
+refund <- tweets[grep("refund", tweets$text, ignore.case=TRUE),]
+
+#refund가 있는 tweet들을 corpus로 만들고 tdm 만들기
+refund.corpus <- VCorpus(DataframeSource(refund[1:3,]))
+refund.corpus <- clean.corpus(refund.corpus)
+refund.tdm <- TermDocumentMatrix(refund.corpus, control=list(weighting=weightTf))
+
+#adjacency matrix 만들기: 행과 열이름이 같게 정사각형 matrix를 만들어줌.
+#interaction부분: binary operator
+refund.m <- as.matrix(refund.tdm)
+refund.adj <- refund.m %*% t(refund.m) %>%
+  graph.adjacency(weighted=T, mode="undirected", diag=TRUE) %>%    #weighted=TRUE : 더 많이 있을수록 가까운 거리
+  simplify()
+#네트워크 형성(+생김새 조정)
+plot.igraph(refund.adj, vertex.shape="none",
+            vertex.label.font=2, vertex.label.color="darkred",
+            vertex.label.cex=.7, edge.color="gray85")
+title(main='@DeltaAssist Refund Word Network')
+#apologies와 refund가 강한 연관이 있음을 알 수 있다.
+
+#qdap 패키지의 word_network_plot을 이용해서 데이터프레임 가지고 바로 그리기
+library(qdap)   
+word_network_plot(refund$text[1:3])   #자동으로 clean corpus 과정을 수행해준다.
+title(main='@DeltaAssist Refund Word Network')
+
+#더 많은 정보를 통해 network 그리기  (qdap패키지)
+word_associate(tweets$text, match.string=c('refund'),     #관심있는 string을 match.string에 여러개 넣을 수 있다.
+               stopwords=Top200Words, network.plot = T,
+               cloud.colors = c('gray85', 'darkred'))
+title(main='@DeltaAssist Refund Word Network')
+
+
+#Simple word clusters: Hierarchical Dendrograms
+#  : easy approach for word clustering
+#   dendrogram: frequency distance를 기반으로 한 tree-like visualization
+#               단어는 50개정도 다루는게 적당하다.
+#           분류 회귀트리의 대체 함수로 사용한다.
+#   tdm 줄이기위해 tm 패키지의 removeSparseTerms 함수 사용.
+
+tdm2 <- removeSparseTerms(tdm, sparse=0.975)
+# dist 함수: vector간 거리행렬을 만듦. / hclust: 쓸만한 정보들 발굴
+# 한개의 개체를 가지는 n개의 군집으로 시작해서 거리행렬을 통해 가까운 군집들을 묶고
+#거리행렬을 다시 만들어 하나의 군집이 될 때까지 군집끼리 합치는 작업을 반복함.
+#method="complete" : 최장연결법. - 각 군집 안에서 거리가 가장 먼 개체들끼리 거리를 계산한다.
+hc <- hclust(dist(tdm2, method="complete"), method="complete")
+#dendrogram 시각화
+plot(hc, yaxt='n', main='@DeltaAssist Dendrogram')
+
+#dendrogram coloring하는 function 만들기
+dend.change <- function(n) {
+  if (is.leaf(n)) {
+    a <- attributes(n)
+    labCol <- labelColors[clusMember[which(
+      names(clusMember) == a$label
+    )]]
+    attr(n, "nodePar") <- c(a$nodePar, lab.col=labCol)
+  }
+  n
+}
+기
+#만든 function을 예제에 적용
+hcd <- as.dendrogram(hc)
+clusMember <- cutree(hc, 4) #4개의 그룹으로 clustering(cluster별로 다른 색깔 입히기위해!)
+labelColors <- c('darkgrey', 'darkred', 'black', '#bada55') #4개 그룹의 각 색깔 선택
+clusDendro <- dendrapply(hcd, dend.change) #각 노드별로 특정함수를 적용
+plot(clusDendro, main="@DeltaAssist Dendrogram",
+     type="triangle", yaxt='n')
+
+#더 쉽게 color 부여하기(위에꺼보다 쉽다) -> dendextend, circlize 패키지 이용
+library(dendextend)
+library(circlize)
+hcd <- color_labels(hcd, 4, col=c("#bada55", "darkgrey", "black", "darkred"))
+hcd <- color_branches(hcd, 4, col=c('#bada55', 'darkgrey', 'black', 'darkred'))
+circlize_dendrogram(hcd, labels_track_height = 0.5, dend_track_height = 0.4)
+
+
+##Word Clouds
+
+#One Corpus Word Clouds  term frquency vector 필요
+library(wordcloud)
+head(freq.df)
+wordcloud(freq.df$word, freq.df$frequency, max.words=100, colors=c('black', 'darkred'))
+
+#Comparing, Contrasting Corpora in Word Cloud
+library(tm)
+tryTolower <- function(x) {
+  y=NA
+  try_error=tryCatch(tolower(x), error=function(e) e)
+  if (!inherits(try_error, 'error'))
+    y=tolower(x)
+  return(y)
+}
+custom.stopwords <- c(stopwords('english'), 'sorry', 'amp', 'delta', 'amazon')
+clean.vec <- function(text.vec) {
+  text.vec <-tryTolower(text.vec)
+  text.vec <-removeWords(text.vec, custom.stopwords)
+  text.vec <-removePunctuation(text.vec)
+  text.vec <-stripWhitespace(text.vec)
+  text.vec <-removeNumbers(text.vec)
+  return(text.vec)
+}
+#오리지널 아마존, 델타 데이터 import
+amzn <- read.csv('amzn_cs.csv')
+delta <-read.csv('oct_delta.csv')
+
+#text vector cleaning
+amzn.vec <- clean.vec(amzn$text)
+delta.vec <- clean.vec(delta$text)
+
+#두개의 document를 가진 corpus 만들기
+amzn.vec <- paste(amzn.vec, collapse=" ")
+delta.vec <- paste(delta.vec, collapse=" ")
+all <- c(amzn.vec, delta.vec)
+corpus <- VCorpus(VectorSource(all))
+
+#TDM 만들기
+tdm <- TermDocumentMatrix(corpus)
+tdm.m <- as.matrix(tdm)
+colnames(tdm.m) <- c('Amazon', "delta")
+tdm.m[3480:3490,]
+
+
+#RcolorBrewer 패키지: 워드클라우드 색깔 지정에 도움을 줌
+display.brewer.all() #RcolorBrewer에서 제공하는 color palette 한눈에 보기
+pal <- brewer.pal(8, "BuPu") #패키지에서 제공하는 color palette 중 BuPu를 선택
+pal <- pal[-(1:4)] #너무 밝은 컬러는 워드클라우드 해석하는데 어려움이 있으므로 패스
+
+#commonality cloud 생성하기
+commonality.cloud(tdm.m, max.words=200, random.order=FALSE, colors=pal)
+
+#comparision cloud 생성하기
+#Dark2 팔레트에서 색깔 두개(tdm.m의 column갯수만큼) 선택하여 두 집단을 비교한다.
+comparison.cloud(tdm.m, max.words=200, random.order = FALSE, size=1,
+                 colors=brewer.pal(ncol(tdm.m), "Dark2"))
+
+
+
+##polarized Tag Plot : for consistency
+#    plotrix 패키지 이용
+library(plotrix)
+common.words <- subset(tdm.m, tdm.m[,1]>0 & tdm.m[,2]>0)
+tail(common.words)
+
+#amazon과 delta의 frequency 차이의 절댓값 구하기
+difference <- abs(common.words[,1] - common.words[,2])
+
+#기존 데잍와 difference 합치기
+common.words <- cbind(common.words, difference)
+common.words <- common.words[order(common.words[,3], decreasing = TRUE),]
+
+#차이가 큰 25개의 데이터만 빼기
+top25.df <- data.frame(x=common.words[1:25,1], y=common.words[1:25,2],
+                       labels=rownames(common.words[1:25,]))
+
+#pyramid plot 그리기
+pyramid.plot(top25.df$x, top25.df$y,
+             labels=top25.df$labels, gap=14, top.labels = c("Amazon", "Words", "Delta"),
+             main="Words in Common", laxlab=NULL, raxlab=NULL, unit=NULL)
