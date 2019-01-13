@@ -1,0 +1,163 @@
+#### Chapter 4.Sentiment Scoring ####
+
+setwd('C:/Users/dcng/Documents/text_mining-master')
+
+options(stringsAsFactors = FALSE) 
+Sys.getlocale() 
+Sys.setlocale("LC_ALL", "C")
+
+
+###qdap's polarity function dictionary에 없는 단어 추가하기
+library(qdap)
+new.pos <- c('rofl', 'lol')
+
+#basic subjectivity lexicon의 positive term만 가져오기
+old.pos <- subset(as.data.frame(key.pol), key.pol$y==1)
+
+#기존 term과 추가할 단어들을 합치기
+all.pos <- c(new.pos, old.pos[,1])
+
+new.neg <- c('kappa', 'meh')
+old.neg <- subset(as.data.frame(key.pol), key.pol$y==-1)
+all.neg <- c(new.neg, old.neg[,1])
+
+all.polarity <- sentiment_frame(all.pos, all.neg, 1, -1)
+
+polarity('ROFL, look at that!', polarity.frame = all.polarity) #ROFL포함한 term
+polarity('ROFL, look at that!', polarity.frame = key.pol) #안포함한 term
+polarity('whatever you say, kappa.', polarity.frame=all.polarity)
+polarity('whatever you say, kappa.')
+
+
+
+
+###Sentiment Word Clouds
+options(stringsAsFactors = FALSE)
+library(tm)
+library(qdap)
+library(wordcloud)
+library(tidyverse)
+library(ggthemes)
+
+bos.airbnb <- read.csv("bos_airbnb_1k.csv")
+
+#calculoate the polarity of each comment
+bos.pol <- polarity(bos.airbnb$comments)
+
+#distribution of polarity score - ggplot 이용
+ggplot(bos.pol$all, aes(polarity, ..density..))+theme_gdocs()+
+  geom_histogram(binwidth=0.25, fill="darkred", colour="grey60", size=0.2)+
+  geom_density(size=0.75)
+
+#polarity scores
+bos.airbnb$polarity <- scale(bos.pol$all$polarity)
+
+#cut-off threshold를 기반으로 positive와 negative term 나누기
+pos.comments <- subset(bos.airbnb$comments,
+                       bos.airbnb$polarity>0)
+neg.comments <- subset(bos.airbnb$comments,
+                       bos.airbnb$polarity<0)
+
+#각각 positive와 negative term을 하나로 합친 뒤 
+#두개의 합쳐진 comment를 가진 vector 만들기
+pos.terms <-paste(pos.comments, collapse=" ")
+neg.terms <- paste(neg.comments, collapse=" ")
+all.terms <-c(pos.terms, neg.terms)
+all.corpus <- VCorpus(VectorSource(all.terms))
+
+#tdm 만들기. : 가중치를 term frequency(Tf)대신 TfIdf로 준다.
+#              TfIDf: product of term frequency and inverse document frequency
+
+all.tdm <- TermDocumentMatrix(all.corpus,
+                              control=list(weighting=weightTfIdf,
+                                           removePunctuation=TRUE,
+                                           stopwords=stopwords(kind='en')))
+
+all.tdm.m <- as.matrix(all.tdm)
+colnames(all.tdm.m) <- c('positive', 'negative')
+
+#comparison cloud 만들기
+comparison.cloud(all.tdm.m, max.words = 100,
+                 colors=c('darkgreen', 'darkred'))
+
+
+
+##Emoticons in R
+
+#Using unicode
+"\U2764"
+text <- "I am \U263B. I \U2764 ice cream"
+patterns <- c("\U263B", "\U2764")
+replace<- c("happy", "love")
+mgsub(patterns, replace, text)
+
+#punctuation based Emoticons
+data("emoticon")
+head(emoticon)
+
+meaning <- c('troubled face')
+emoticon <- c('(>_<)')
+new.emotes <- data.frame(meaning, emoticon)
+emoticon <- rbind(emoticon, new.emotes)
+
+text <- "Text mining is so much fun :-D. This book is O:-)"
+mgsub(emoticon[,2], emoticon[,1], text)
+
+iconv(text, "UTF-8", "UTF-8", "byte")
+
+install.packages("twitteR")
+library(twitteR)
+print(tweet)
+
+
+
+##Sentiment the Tidytext Way
+install.packages("tidytext")
+library(tidytext)
+data("sentiments")
+afinn <- sentiments %>% filter(lexicon=="AFINN")
+bing <- sentiments %>% filter(lexicon=="bing")
+nrc <- sentiments %>% filter(lexicon=="nrc")
+
+library(tm)
+library(ggthemes)
+oz <- readLines("Wizard_Of_Oz.txt")
+
+oz.corp <- VCorpus(VectorSource(oz))
+clean.corpus <- function(corpus) {
+  corpus <-tm_map(corpus, content_transformer(tolower))
+  corpus <- tm_map(corpus, removeWords, stopwords('english'))
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, stripWhitespace)
+  corpus <- tm_map(corpus, removeNumbers)
+  return(corpus)
+}
+oz.corp <- clean.corpus(oz.corp)
+oz.dtm <- DocumentTermMatrix(oz.corp)
+oz.tidy <- tidy(oz.dtm)
+
+#sentiment와의 inner join을 위해 변수명 맞추기
+colnames(oz.tidy) <- c("line_number", "word", "count")
+oz.tidy$line_number <- as.numeric(oz.tidy$line_number)
+nrc.joy <- sentiments %>% filter(lexicon=="nrc", sentiment=="joy")
+
+joy.words <- inner_join(oz.tidy, nrc.joy) %>% count(word)
+
+#construct a polarity timeline
+bing <- sentiments %>% filter(lexicon=="bing") %>% select(-(score))
+
+oz.sentiment <- inner_join(oz.tidy, bing) %>% count(sentiment, index=line_number)
+#oz.sentiment를 negative와 positive로 나눔
+oz.sentiment <- spread(oz.sentiment, sentiment, n, fill=0) #들어갈 n value가 없는 경우 0으로 채워라
+oz.sentiment[15:20,]
+
+#polarity와 pos column 추가
+oz.sentiment$ polarity <- oz.sentiment$positive - oz.sentiment$negative
+oz.sentiment$pos <- ifelse(oz.sentiment$polarity >= 0, "pos", "neg")
+
+
+#index별 polarity 시각화
+ggplot(oz.sentiment, aes(index, polarity, fill=pos))+
+  geom_bar(stat="identity", position="identity", width=1) + theme_gdocs()
+
+ggplot(oz.sentiment, aes(index, polarity))+ geom_smooth()+theme_gdocs()
