@@ -1,0 +1,62 @@
+options(stringsAsFactors = FALSE)
+Sys.setlocale("LC_ALL", "C")
+setwd("C:/Users/dcng/Documents/text_mining-master")
+
+library(data.table)
+library(text2vec)
+library(tm)
+
+text <- fread('Airbnb-boston_only.csv')
+airbnb <- data.table(review_id=text$review_id, comments=text$comments, 
+                     review_scores_rating=text$review_scores_rating)
+airbnb$comments <- removeWords(airbnb$comments, c(stopwords('en'), 'Boston'))
+airbnb$comments <- removePunctuation(airbnb$comments)
+airbnb$comments <- stripWhitespace(airbnb$comments)
+airbnb$comments <- removeNumbers(airbnb$comments)
+airbnb$comments <- tolower(airbnb$comments)
+
+#comments 나누기
+tokens <- strsplit(airbnb$comments, split=" ", fixed=T)
+
+#vocabulary 만들기
+vocab <- create_vocabulary(itoken(tokens), ngram=c(1,1))
+
+#5번 이상 나오지않는 단어들 가지치기
+vocab <- prune_vocabulary(vocab, term_count_min = 5)
+
+vocab[[1]][221:225]
+
+#create term co-occurrence matrix(TCM)
+iter <- itoken(tokens)
+vectorizer <- vocab_vectorizer(vocab)
+tcm <- create_tcm(iter, vectorizer, grow_dtm=F, skip_grams_window = 5)
+
+#####요기 책이랑 다름####
+#constructor for Global vectors model
+fit.glove <- GlobalVectors$new(
+  word_vectors_size = 50, vocabulary = vocab,learning_rate = 0.2, x_max = 10)
+word.vectors<-fit.glove$fit_transform(x=tcm, n_iter=15)
+dim(word.vectors)
+
+word.vec.norm<-sqrt(rowSums(word.vectors^2))
+
+
+#Cosine distance 구하기
+
+good.walks<-word.vectors['walk', ,drop=F]-  
+  word.vectors['disappointed', ,drop=F]+
+  word.vectors['good', ,drop=F]
+
+cos.dist<-sim2(x = word.vectors, y=good.walks, 
+               method = "cosine", norm = "l2")
+
+head(sort(cos.dist[,1], decreasing = T), 10)
+
+dirty.sink<- word.vectors['sink', ,drop=F]-
+  word.vectors['condition', ,drop=F]+
+  word.vectors['dirty', ,drop=F]
+
+cos.dist<- sim2(x = word.vectors, y=dirty.sink,
+                method = "cosine", norm = "l2")
+
+head(sort(cos.dist[,1], decreasing = T), 10)  
