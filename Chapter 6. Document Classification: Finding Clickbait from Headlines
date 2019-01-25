@@ -1,5 +1,3 @@
-####Chapter 6. Document Classification: Finding Clickbait from Headlines
-
 setwd("C:/Users/dcng/Documents/text_mining-master")
 Sys.setlocale("LC_ALL", "C")
 library(tm)
@@ -41,17 +39,39 @@ match.matrix <- function(text.col, original.matrix=NULL, weighting=weightTf){
       cbind(matrix[,which(colnames(matrix) %in% colnames(original.matrix))], amat),
       weighting = weighting)
     matrix <- fixed
-    }
-    matrix <- matrix[,sort(colnames(matrix))]
-    gc()
-    return(matrix)
   }
+  matrix <- matrix[,sort(colnames(matrix))]
+  gc()
+  return(matrix)
+}
 
 
 
 #데이터 불러오기 / train set과 test set 나누기
-library(data.table)
-headlines <- fread('all_3k_headlines.csv', encoding="Latin-1")
+raw.headlines<-readLines('https://raw.githubusercontent.com/kwartler/text_mining/master/all_3k_headlines.csv',
+                         encoding='latin1')[-1]
+raw.headlines[2969]<-paste(gsub('\\"','',raw.headlines[2969]),
+                           gsub('\\",','',raw.headlines[2971]),
+                           sep=',')
+raw.headlines<-raw.headlines[-c(2970,2971)]
+library(stringr)
+headline_etc<-str_split(raw.headlines, 'http{1}', simplify=TRUE)
+headline_etc[1513,2]<-paste(headline_etc[1513,2],
+                            'http',headline_etc[1513,3],
+                            sep='')
+text<-headline_etc[,1]
+url_site_y<-paste('http',headline_etc[,2],sep='')
+url_site_y<-str_split(url_site_y,',',simplify=TRUE)
+url<-url_site_y[,1]
+site<-url_site_y[,2]
+y<-url_site_y[,3]
+headlines<-tibble(
+  headline=text,
+  url=url,
+  site=site,
+  y=factor(y)
+)
+
 train <- createDataPartition(headlines$y, p=0.5, list=FALSE)
 train.headlines <- headlines[train,]
 test.headlines <- headlines[-train,]
@@ -114,3 +134,38 @@ plot(test.auc, add=TRUE, col="red", lty=2)
 
 cnfusion <- table(headline.preds[,2], test.headlines$y)
 sum(diag(confusion))/sum(confusion)
+
+#Finding most impactful words
+glmnet.coef <- as.matrix(coef(cv, s='lambda.min'))
+glmnet.coef <- data.frame(words=row.names(glmnet.coef),
+                          glmnet_coefficients=glmnet.coef[,1])
+
+glmnet.coef <- glmnet.coef[order(
+  glmnet.coef$glmnet_coefficients, decreasing = T),]
+glmnet.coef$words <- factor(glmnet.coef$words, levels=unique(glmnet.coef$words))
+
+summary(glmnet.coef$glmnet_coefficients)
+
+length(subset(glmnet.coef$glmnet_coefficients, glmnet.coef$glmnet_coefficients>0))
+
+length(subset(glmnet.coef$glmnet_coefficients, glmnet.coef$glmnet_coefficients<0))
+ggplot(glmnet.coef, aes(glmnet.coef$glmnet_coefficients))+
+  geom_line(stat='density', color='darkred', size=1)+theme_gdocs()
+
+top.coef <- rbind(head(glmnet.coef, 10),
+                  tail(glmnet.coef, 10))
+top.coef$impact <- ifelse(
+  top.coef$glmnet_coefficients>0, "Positive", "Negative")
+
+ggplot(top.coef, aes(glmnet_coefficients, words))+
+  geom_segment(aes(yend=words), xend=0, colour="grey50")+
+  geom_point(size=3, aes(colour=impact))+theme_few()
+
+
+#arm 패키지의 invlogit function
+glmnet.coef$probability <- invlogit(
+  glmnet.coef$glmnet_coefficients)
+top.coef$probability <- invlogit(top.coef$glmnet_coefficients)
+
+plot(glmnet.coef$probability, glmnet.coef$word, col='blue')
+plot(top.coef$probability, top.coef$word, col='red', pch=16)
