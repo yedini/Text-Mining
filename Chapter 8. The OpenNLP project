@@ -1,0 +1,166 @@
+####Chapter 8. The OpenNLP project
+
+options(stringsAsFactors = FALSE)
+Sys.setlocale('LC_ALL', "C")
+library(gridExtra)
+library(ggmap)
+library(ggthemes)
+library(NLP)
+library(openNLP)
+library("openNLPmodels.en", lib.loc="~/R/win-library/3.4") #livrary 위치는 install 할때 지정했던 주소로 지정함.
+library(pbapply)
+library(stringr)
+library(rvest)
+library(doBy)
+library(tm)
+library(cshapes)
+
+setwd("C:/Users/dcng/Documents/text_mining-master/C8_final_txts")
+
+temp <- list.files(pattern='*.txt') #directory에 있는 텍스트 파일을 전부 temp에 저장함.
+for (i in 1:length(temp)) assign(temp[i], readLines(temp[i])) #각각의 텍스트에서 한 줄씩 인자로 인식해서 불러옴.
+all.emails <- pblapply(temp, get)  #pblapply: lapply + percent bar
+
+
+#preprocessing
+txt.clean <- function(x) {
+  x <- x[-1] #첫 행 제거
+  x <- paste(x, collapse=" ") #공백을 구분자로 해서 모든 인자를 붙임
+  x <- str_replace_all(x, "[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+", "")
+  x <-str_replace_all(x, "Doc No.", "")
+  x <- str_replace_all(x, "UNCLASSIFIED U.S. Department of State Case No.", "")
+  x <- removeNumbers(x)
+  x <- as.String(x)
+  return(x)
+}
+
+all.emails <- pblapply(all.emails, txt.clean)
+all.emails[[3]][18,24]
+
+#각 이메일을 나타내는 이름 붙이기. temp에는 파일이름이 들어있으므로 각각의 list의 이름이 파일 이름이 됨.
+names(all.emails) <- temp
+
+#text file objects 지우기
+rm(list=temp)
+
+#apply the maxent annotations
+persons <- Maxent_Entity_Annotator(kind="person")   #named entity 식별. named entity: 사람, 조직, 장소 등 "이름"을 가진 개체
+locations <- Maxent_Entity_Annotator(kind='location')
+organizations <- Maxent_Entity_Annotator(kind='organization')
+sent.token.annotator <- Maxent_Sent_Token_Annotator(language = 'en')  #문장 경계 구분
+word.token.annotator <- Maxent_Word_Token_Annotator(language = 'en')   #단어 식별
+pos.tag.annotator <- Maxent_POS_Tag_Annotator(language = "en")   #품사 식별
+
+#apply annotation models to a pos.tag.annotator, persons, 
+                              single email - 세번째 이메일에 적용
+annotations <- annotate(all.emails[[3]], list(sent.token.annotator, word.token.annotator,
+                                                              locations, organizations))
+
+#만들어진 list형태의 annatation object를 data.frame화
+ann.df <- as.data.frame(annotations)[,2:5] #불필요한 id열은 없앰
+ann.df$features <- unlist(as.character(ann.df$features))
+ann.df[244:250,]
+
+#for문: 문자의 시작과 끝위치를 이용해 실제 문장/단어/entity를 ann.df의 words로 가져온다.
+anno.chars <- NULL
+for (i in 1:nrow(ann.df)) anno.chars[i] <-
+  ((substr(all.emails[[3]], ann.df[i,2], ann.df[i,3])))
+ann.df$words <- anno.chars
+
+#각 feature에 따라 나눠보기
+subset(ann.df$words, grepl("*person", ann.df$features)==TRUE)
+subset(ann.df$words, grepl("*location", ann.df$features)==TRUE)
+subset(ann.df$words, grepl("*organization", ann.df$features)==TRUE)
+#수정이 필요한 데이터를 발견할 수 있음.
+
+#preprocessing이 더 필요함을 알 수 있음 -> 이메일 원본 가져와서 확인해보기
+third.email <- readLines(temp[[3]])
+#National Security Council이 들어간 문장의 인덱스 찾기
+entity.pos <- grep("National Security Council", third.email)
+#해당 인덱스 출력
+third.email[entity.pos]
+
+
+##using openNLP on multiple documents
+annotate.entities <- function(doc, annotation.pipeline) {
+  annotations <- annotate(doc, annotation.pipeline)
+  AnnotatedPlainTextDocument(doc ,annotations)
+}
+
+ner.pipeline <- list(
+  Maxent_Sent_Token_Annotator(),
+  Maxent_Word_Token_Annotator(),
+  Maxent_POS_Tag_Annotator(),
+  Maxent_Entity_Annotator(kind="person"),
+  Maxent_Entity_Annotator(kind="location"),
+  Maxent_Entity_Annotator(kind="organization")
+)
+
+#annotation function을 전체 메일 list에 저장하기
+all.ner <- pblapply(all.emails, annotate.entities, ner.pipeline)
+
+#extract information
+all.ner <- pluck(all.ner, "annotations") #pluck함수: 이름/인덱스로 목록 요소 추출.
+all.ner <- pblapply(all.ner, as.data.frame)
+all.ner[[3]][244:250,] #시작,끝점만 알 수 있고 어떤 단어인지는 나오지 않음.
+
+#각 인자에 함수를 적용한 후 이를 반환함.
+#이메일(tex)에서 entity 시작점부터 끝점까지를 선택하면 단어가 출력됨.
+all.ner <- Map(function(tex, fea, id)  cbind(fea, entity=substring(tex, fea$start, fea$end),
+                                           file=id), all.emails, all.ner, temp)
+
+all.ner[[3]][244:250,]
+
+#create a unified entity dataframe
+all.ner <- do.call(rbind, all.ner) #do.call: 함수를 계속 호출하는 함수 
+                           #=> rbind를 계속 호술해서 551개 메일의 주석목록을 하나의 df로 통합함.
+all.ner$features <- unlist(as.character(all.ner$features))
+
+#해당 feature가 들어간 인덱스를 뽑아서 all.ner에서 해당 인덱스를 불러들임.
+all.per <- all.ner[grep("person", all.ner$features),]
+all.loc <- all.ner[grep("location", all.ner$features),]
+all.org <- all.ner[grep("organization", all.ner$features),]
+
+#analyzing the named entities
+uni.loc <- unique(all.loc$entity)
+uni.loc <- all.loc[firstobs(~entity, data=all.loc),]
+orgs <- as.matrix(table(as.factor(all.org$entity)))
+orgs[216:220,1]
+
+orgs <- orgs[order(orgs[,1], decreasing = TRUE),]
+side.margins <- par(mar=c(11,2,1,1)+0.3)
+barplot(orgs[1:20], las=2)
+
+
+#senate, white house, russia가 나오는 이메일에 대한 감정분석
+senate <- grep("Senate", all.org$entity, ignore.case=TRUE)
+white.house <- grep("White House", all.org$entity, ignore.case=TRUE)
+russia <- grep("Russia", all.loc$entity, ignore.case=TRUE)
+se.files <- all.org[senate,7]
+wh.files <- all.org[white.house, 7]
+ru.files <- all.loc[russia,7]
+three.ent.files <- c(se.files, wh.files, ru.files)
+
+#해당 인덱스의 이메일들의 원본을 불러옴.
+for (i in 1:length(three.ent.files)) assign(     ##assign: 변수를 생성하는 함수
+  three.ent.files[i], readLines(three.ent.files[i]))
+
+three.ent.emails <- pblapply(three.ent.files, get)  #get: 변수의 값을 가져오는 함수(assign이랑 반대)
+rm(list=three.ent.files)
+
+#polarity: 텍스트를 분석하여 긍/부정을 scoring
+library(qdap)
+three.ent.polarity <- pblapply(three.ent.emails, polarity)
+
+#각 문서를 group형태로 출력
+score.list <- pluck(three.ent.polarity, "group")  #pluck: 리스트의 값을 가져오는 함수
+#각 그룹 내 ave.polarity 출력
+scores <- unlist(pblapply(score.list, "[[", 'ave.polarity'))
+
+scores.df <- data.frame(score=scores, group=c(rep('Senate', length(senate)),
+                                              rep('White House', length(white.house)),
+                                              rep('Russia', length(russia))))
+
+ggplot(scores.df, aes(group, score, group=group))+
+  geom_boxplot(aes(fill=group))+theme_gdocs()+
+  geom_jitter(colour="gray40", width=0.2, alpha=0.3)+ ggtitle("NER polarity")
