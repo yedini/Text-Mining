@@ -1,0 +1,224 @@
+####Chapter 7. Predictive Modeling: Using Text for Classifying and Predicting Outcomes####
+
+
+###Case study 1 : Will This Patient Come Back to the Hospital?
+setwd("C:/Users/dcng/Documents/text_mining-master")
+library(text2vec)
+library(caret)
+library(tm)
+library(glmnet)
+library(pROC)
+library(tidyverse)
+
+#custom preprocessing function
+diagnosis.clean <- function(x) {
+  x <- removePunctuation(x)
+  x <- stripWhitespace(x)
+}
+
+diabetes <- read.csv("diabetes_subset_8500.csv")
+
+#diabetes에서 텍스트가 들어있는 column들을 diag.text 하나로 합침.
+diabetes$diag.text <-
+  as.character(paste(diabetes$diag_1_desc, diabetes$diag_2_desc, diabetes$diag_3_desc, sep=" "))
+
+#data cleaning
+diabetes$diag.text <- diagnosis.clean(diabetes$diag.text)
+
+#train/test dataset 나누기
+train <- createDataPartition(diabetes$readmitted, p=0.7, list=F)
+train.diabetes <- diabetes[train,]
+test.diabetes <- diabetes[-train,]
+
+##text2vec 패키지 method를 이용한 DTM construction
+#iterator object(vocabulary를 위한 iterator)
+iter.maker <- itoken(train.diabetes$diag.text, 
+                     preprocess_function=tolower, tokenizer=word_tokenizer)
+
+#iter.maker를 이용해 unique word list 만들기
+v <- create_vocabulary(iter.maker, stopwords=stopwords('en'))
+
+#corpus 형성(list형태로 있는 vocabulary information을 DTM으로 만들려면 vector로 바꿔줘야됨.)
+vectorizer <- vocab_vectorizer(v)
+
+#두번째 iterator 만들기 - matrix construction을 위해
+it <- itoken(train.diabetes$diag.text,
+             preprocess_function=tolower, tokenizer=word_tokenizer)
+
+#dtm 만들기
+dtm <- create_dtm(it, vectorizer)
+
+##만들어진 dtm은 simple term frequency를 바탕으로 함.
+# 번외 : tfidf weight로 변환하기
+tfidf = TfIdf$new()
+dtm.tfidf <- dtm %>% fit_transform(tfidf)
+
+
+##Patient Modeling
+text.cv <- cv.glmnet(dtm, y=as.factor(train.diabetes$readmitted),
+                     alpha=0.9, family="binomial", type.measure="auc", 
+                     nfolds = 5, intercept=FALSE)
+
+#plot으로 model performance 확인
+plot(text.cv)
+
+
+##text를 제외한 input을 이용한 model을 만들어서 비교하기
+#text제외한 나머지 column으로 matrix 생성후 glmnet model 형성
+no.text <- as.matrix(train.diabetes[,1:132])
+no.text.cv <- cv.glmnet(no.text, y=as.factor(train.diabetes$readmitted), alpha=0.9,
+                        family='binomial', type.measure ='auc', nfolds=5, intercept=FALSE)
+plot(no.text.cv)
+title("GLMNET no Text")
+#text가 없는 모델이 좀 더 많은 정보를 준다.
+
+#no.text와 dtm을 결합한 모델 만들기(모든 변수를 input으로)
+all.data <- cBind(dtm, no.text)
+all.cv <- cv.glmnet(all.data, y=as.factor(train.diabetes$readmitted),
+                    alpha=0.9, family='binomial', type.measure='auc', nfolds=5, intercept=FALSE)
+
+#만든 모델들을 이용해 predict function으로 T/F 예측하기
+text.preds <- as.logical(predict(text.cv, dtm, type='class', s=text.cv$lambda.min))
+#calculate ROC
+text.roc <- roc((train.diabetes$readmitted*1), text.preds*1)
+
+no.text.preds <- as.logical(predict(no.text.cv, no.text, type='class',
+                                    s=no.text.cv$lambda.min))
+no.text.roc <- roc((train.diabetes$readmitted*1), no.text.preds*1)
+
+all.data.preds <- as.logical(predict(all.cv, all.data, type='class', s=all.cv$lambda.min))
+all.data.roc <- roc((train.diabetes$readmitted*1), all.data.preds*1)
+
+#세 모델의 예측률 visualization
+plot(text.roc, col="blue", main="BLUE=Text, RED=No Text, GREEN=ALL", adj=0)
+plot(no.text.roc, add=TRUE, col="red", lty=2)
+plot(all.data.roc, add=TRUE, col="darkgreen", lty=3)
+#모든 변수를 input으로 집어넣었을 때 가장 많은 정보를 주는 것을 알 수 있음!
+
+
+##Additional Evaluation Metrics
+confusion <- confusionMatrix(all.data.preds, train.diabetes$readmitted)
+recall <- confusion$vyClass['Sensitivity']
+precision <- confusion$byClass['Pos Pred Value']
+f1.score <- 2 * ((precision*recall)/(precision+recall))
+
+#Apply the Model to New Patients
+test.it <- itoken(test.diabetes$diag.text, preprocess_function=tolower,
+                  tokenizer=word_tokenizer)
+test.dtm <- create_dtm(test.it, vectorizer)
+test.no.text <- as.matrix(test.diabetes[,1:132])
+new.patients <- cBind(test.dtm, test.no.text)
+
+#all.cv 모델로 예측하기
+test.preds <- predict(all.cv, new.patients, type='class', s=all.cv$lambda.min)
+
+#create test set confusion matrix
+test.confusion <- confusionMatrix(test.preds, test.diabetes$readmitted)
+test.precision <- test.confusion$byClass['Pos Pred Value']
+test.recall <- test.confusion$byClass['Sensitivity']
+test.f1 <- 2*((test.precision*test.recall)/(test.precision+test.recall))
+
+
+### Case study 2: Predicting Box Office Success
+library(data.table)
+library(pbapply)
+library(text2vec)
+library(caret)
+library(glment)
+library(qdap)
+library(tm)
+library(Metrics)
+library(tidyverse)
+library(ggthemes)
+
+options(stringsAsFactors = FALSE)
+Sys.setlocale('LC_ALL', "C")
+
+movie.data <- fread('2k_movie_reviews.csv')
+
+#custom cleaning function
+review.clean <- function(x) {
+  x <- replace_contraction(x)
+  x <- removePunctuation(x)
+  x <- stripWhitespace(x)
+  x <- removeNumbers(x)
+  x <- tolower(x)
+  x <- stemmer(x)
+  return(x)
+}
+
+#text cleaning
+clean.text <- review.clean(movie.data$train.movies)
+
+#separating dependent variable
+y <- movie.data$opening_weekend
+
+#data partitioning
+train <- createDataPartition(y, p=0.8, list=FALSE)
+train.movies <- clean.text[train]
+train.y <- y[train]
+test.movies <- clean.text[-train]
+test.y <- y[-train]
+
+#create iterator
+iter.maker <- itoken(train.movies, tokenizer=word_tokenizer)
+v <- create_vocabulary(iter.maker, stopwords=c(stopwords('SMART'), 'movie', 'movies'))
+#    stopwords 'SAMRT' : 'en' stopwords보다 더 많은 단어들을 포함하는 단어모음
+
+#prune vocabulary function: 거의 안나오는/너무 많이나오는 단어들을 제거함으로써 term을 줄임.
+pruned.v <- prune_vocabulary(v, term_count_min=10, doc_proportion_max = 0.5,
+                             doc_proportion_min=0.001)
+#  term_count_min: 최소 등장횟수, doc_proportion_max: 전체 document에서 차지할 수 있는 최대비율
+#  doc_proportion_min: 전체 documents에서 최소 등장 비율
+
+#vocabulary 벡터화
+vectorizer <- vocab_vectorizer(pruned.v)
+#dtm생성
+it <- itoken(train.movies, tokenizer= word_tokenizer)
+dtm <- create_dtm(it, vectorizer)
+
+
+#fit a cross validated model using cv.glmnet
+text.cv <- cv.glmnet(dtm, train.y, alpha=1, family='gaussian',
+                     type.measure='mse', nfolds=5, intercept=TRUE)
+plot(text.cv)
+title("Movie Review predict Revenue")
+
+
+#Model Evaluation
+text.preds <- predict(text.cv, dtm, s=text.cv$lambda.min)
+
+#train data set의 실체 y값과 예측한 y값을 데이터프레임으로 묶기
+train.dat <- data.frame(actual=train.y, preds=text.preds[,1])
+
+#calculating RMSE
+rmse(train.dat$actual, train.dat$preds)
+#calculating MAE
+mae(train.dat$actual, train.dat$preds)
+
+#tidy data로 변환
+train.tidy <- gather(train.dat)
+
+#box plot visualization
+ggplot(train.tidy, aes(key, value, fill=key))+geom_boxplot()+theme_gdocs()
+# -> 평균 수입은 잘 예측했는데, 낮은 수익은 예측률이 떨어진다고 볼 수 있음.
+
+#scatter plot visualization(actual value와 predicted value의 관계를 쉽게 확인)
+ggplot(train.dat, aes(actual, preds))+geom_point(color='darkred', shape=1)+
+  stat_smooth(method=lm)+theme_gdocs()
+
+#test movie review에 모델 적용하기
+test.text <- review.clean(test.movies)
+
+test.it <- itoken(test.text, preprocess_function=tolower, tokenizer=word_tokenizer)
+
+test.dtm <- create_dtm(test.it, vectorizer)
+
+test.preds <- predict(text.cv, test.dtm, s=text.cv$lambda.min)
+
+rmse(test.y, test.preds)
+mae(test.y, test.preds)
+
+test.dat <- data.frame(actual=test.y, preds=test.preds[,1])
+ggplot(test.dat, aes(actual, preds))+geom_point(color='darkred', shape=1)+
+  geom_smooth(method=lm)+theme_gdocs()
