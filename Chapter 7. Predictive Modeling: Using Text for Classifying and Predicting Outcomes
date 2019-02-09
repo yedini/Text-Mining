@@ -61,7 +61,7 @@ text.cv <- cv.glmnet(dtm, y=as.factor(train.diabetes$readmitted),
 
 #plot으로 model performance 확인
 plot(text.cv)
-
+#lambda값에 따라 AUC값이 달라지는데 값이 작아질수록 AUC가 작아짐.
 
 ##text를 제외한 input을 이용한 model을 만들어서 비교하기
 #text제외한 나머지 column으로 matrix 생성후 glmnet model 형성
@@ -70,7 +70,7 @@ no.text.cv <- cv.glmnet(no.text, y=as.factor(train.diabetes$readmitted), alpha=0
                         family='binomial', type.measure ='auc', nfolds=5, intercept=FALSE)
 plot(no.text.cv)
 title("GLMNET no Text")
-#text가 없는 모델이 좀 더 많은 정보를 준다.
+#text가 없는 모델이 좀 더 많은 정보를 준다.  (text.cv보다 더 큰 AUC값을 가짐.)
 
 #no.text와 dtm을 결합한 모델 만들기(모든 변수를 input으로)
 all.data <- cBind(dtm, no.text)
@@ -97,7 +97,7 @@ plot(all.data.roc, add=TRUE, col="darkgreen", lty=3)
 
 
 ##Additional Evaluation Metrics
-confusion <- confusionMatrix(all.data.preds, train.diabetes$readmitted)
+confusion <- confusionMatrix(factor(all.data.preds), train.diabetes$readmitted)
 recall <- confusion$vyClass['Sensitivity']
 precision <- confusion$byClass['Pos Pred Value']
 f1.score <- 2 * ((precision*recall)/(precision+recall))
@@ -110,7 +110,7 @@ test.no.text <- as.matrix(test.diabetes[,1:132])
 new.patients <- cBind(test.dtm, test.no.text)
 
 #all.cv 모델로 예측하기
-test.preds <- predict(all.cv, new.patients, type='class', s=all.cv$lambda.min)
+test.preds <- predict(all.cv, new.patients, type='class', s=all.cv$lambda.min)   #lambda.min: mse를 
 
 #create test set confusion matrix
 test.confusion <- confusionMatrix(test.preds, test.diabetes$readmitted)
@@ -138,12 +138,12 @@ movie.data <- fread('2k_movie_reviews.csv')
 
 #custom cleaning function
 review.clean <- function(x) {
-  x <- replace_contraction(x)
+  x <- replace_contraction(x)   ##단어의 축약형이 있는 경우 축약형을 완전형으로 바꿔라.
   x <- removePunctuation(x)
   x <- stripWhitespace(x)
   x <- removeNumbers(x)
   x <- tolower(x)
-  x <- stemmer(x)
+  x <- stemDocument(x)   ##교재는 stemmer()라고 나오는데 이 함수는 에러나고, stemDocument도 같은 결과를 가져옴.  
   return(x)
 }
 
@@ -161,7 +161,7 @@ test.movies <- clean.text[-train]
 test.y <- y[-train]
 
 #create iterator
-iter.maker <- itoken(train.movies, tokenizer=word_tokenizer)
+iter.maker <- itoken(train.movies, tokenizer=word_tokenizer)   #텍스트를 토큰 단위로 나눠줌.
 v <- create_vocabulary(iter.maker, stopwords=c(stopwords('SMART'), 'movie', 'movies'))
 #    stopwords 'SAMRT' : 'en' stopwords보다 더 많은 단어들을 포함하는 단어모음
 
@@ -174,7 +174,7 @@ pruned.v <- prune_vocabulary(v, term_count_min=10, doc_proportion_max = 0.5,
 #vocabulary 벡터화
 vectorizer <- vocab_vectorizer(pruned.v)
 #dtm생성
-it <- itoken(train.movies, tokenizer= word_tokenizer)
+it <- itoken(train.movies, tokenizer= word_tokenizer)   #dtm을 만들기 위한 itoken함수
 dtm <- create_dtm(it, vectorizer)
 
 
@@ -191,9 +191,9 @@ text.preds <- predict(text.cv, dtm, s=text.cv$lambda.min)
 #train data set의 실체 y값과 예측한 y값을 데이터프레임으로 묶기
 train.dat <- data.frame(actual=train.y, preds=text.preds[,1])
 
-#calculating RMSE
+#calculating RMSE :root mean squared error
 rmse(train.dat$actual, train.dat$preds)
-#calculating MAE
+#calculating MAE :error의 합이 0이 되는것을 방지하기 위해 error에 절대값을 씌워준 값.
 mae(train.dat$actual, train.dat$preds)
 
 #tidy data로 변환
