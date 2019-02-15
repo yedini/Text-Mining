@@ -1,0 +1,130 @@
+####Chapter 9. Text Sources####
+
+library(tidyverse)
+
+##Web scraping a single page with rvest
+library(rvest)
+url <- 'http://www.amazon.com/gp/help/customer/forums/ref=cs_hc_g_tv?i.e.=UTF8&forumID=Fx1SKFFP8U1B6N5&cdThread=Tx3JJLVOS6N6YSD'
+page <- read_html(url)
+posts <- html_nodes(page, '.thread-body')
+forum.posts <- html_text(posts)
+
+
+links <- html_nodes(page, xpath='//a') #//:anywhere in the documents, a: HTML에서 <a>가 링크로 정의되어있음.->링크가 걸려있는 텍스트를 불러옴.
+thread.urls <- grep("*Permalink*", links)
+thread.urls <- html_attr(links. "href")[thread.urls]
+thread.urls <- paste0('www.amazon.com', thread.urls)
+
+#각 포스트의 author name
+profile <- grep("*profile*", links)
+authors <- html_text(links[profile])
+author.profiles <- html_attr(links, "href")[profile]
+author.profiles <- paste0('www.amazon.com', author.profiles)
+
+final.df <- data.frame(forum_post=forum.posts, author=authors, author_urls=author.profiles,
+                       thread_urls=thread.urls)
+
+
+##web scaping multiple pages with rvest
+library(rvest)
+library(pbapply)
+library(data.table)
+
+#40개의 페이지 저장하기
+forum.urls <- paste0('http://www.amazon.com/gp/help/customer/forums/ref=cs_hc_g_pg_pg40?i.e.=UTF8&forumID=Fx1SKFFP8U1B6N5&cdPage=',
+                     seq(1:40))
+
+#페이지별로 25개의 conversation thread를 가져오기 위한 custom function만들기
+url.get <- function(x) {
+  page <- read_html(x)
+  links <- html_nodes(page, xpath=
+                        "//table[@class='a-bordered thread-list-table']//td/a/@href")
+  links <- html_text(links)
+  links <- paste0('http://www.amazon.com', links)
+}
+
+all.urls <- pblapply(forum.urls, url.get)
+all.urls <- unlist(all.urls)
+
+forum.scrape <- function(x) {
+  page <- read_html(x)
+  posts <- html_nodes(page, '.thread-body')
+  forum.posts <- html_text(posts)
+  links <- html_nodes(page, xpath='//a')
+  thread.urls <- grep('*Permalink*', links)
+  thread.urls <- html_attr(links, 'href')[thread.urls]
+  thread.urls <-  paste0('amazon.com', thread.urls)
+  profile <- grep('*profile*', links)
+  authors <- html_text(links[profile])
+  author.profiles <- html_attr(links, "href")[profile]
+  author.profiles <- paste0('amazon.com', author.profiles)
+  final.df <- data.table(authors, author.profiles, forum.posts, thread.urls)
+  return(final.df)
+}
+
+amzn.forum <- pblapply(all.urls, forum.scrape)
+amzn.forum <- rbindlist(amzn.forum, use.names = TRUE)
+
+
+##bitcoin general discussion
+all.urls <- paste0('https://bitcointalk.org/index.php?topic=976903.', seq(0,5040, by=20))
+
+#create custom function
+forum.scrape <- function(forum.url){
+  x <- read_html(forum.url)
+  Sys.sleep(1)
+  posts <- x %>% html_nodes(".post") %>% html_text() %>% as.character()
+  posts <- paste(posts, collapse = "")
+  return(posts)
+}
+
+all.posts <- pblapply(all.urls, forum.scrape)
+bitcoin <- do.call(rbind, all.posts)
+
+
+
+##Application Program Interfaces(APIs)
+
+#Guarian newapaper에서 key를 생성하고 text 얻기
+library(GuardianR)
+library(qdap)
+key <- '932d8ab0-b0ba-4307-8d33-6d253d4f9150'
+#받은 key를 이용하여 특정 날짜 기간동안 Brexit가 들어간 기사 찾기.
+text <- get_guardian("Brexit", from.date="2016-07-01", to.date="2016-07-06", api.key=key)
+#text 데이터프레임에서 기사 내용과 id만 가져오기 + 텍스트 전처리
+body <- iconv(text$body, "latin1", "ASCII", sub="")
+body <- gsub('http\\s+\\s*', '', body)
+body <- bracketX(body, bracket = "all")
+text.body <- data.frame(id=text$id, text=body)
+
+
+
+##Tweets Using the twitteR Package
+library(twitteR)
+consumer.key <- 'gowKmemEpuL9006J0ype1pObZ'
+consumer.secret <- 'xJwjnKngdXBGwCNjL8wumXGSpVYQRfDJt2HYbPZTsMnRtEk2YL'
+access.token <- '947339658911916032-FMCrpui2cTRhEvygSbj6egy5Mc2HcP6'
+access.token.secret <- 'Cbcu7qiZxprpTZPgyyOieIasRzjVgxBmWLWL0AcWGHGDJ'
+setup_twitter_oauth(consumer.key, consumer.secret, access.token, access.token.secret)
+
+#Amazon Help와 관련된 트위터 불러오기
+tweets.one <- searchTwitter("AmazonHelp", n=200, lang='en')
+tweets.one.df <- twListToDF(tweets.one)
+tweets.one.df <- tweets.one.df %>% filter(screenName=="AmazonHelp")
+
+#나라/지역별 location code 보기 (woeid: Where On Earth ID)
+availableTrendLocations()
+
+#전세계에서 top 50 trend 해쉬태그를 가져오기. (trend번호 1: worldwide)
+world.wide.trends <- getTrends(1)
+world.wide.trends[1, 1:4]
+world.wide.trends[2, 1:4]
+
+#미국의 50가지 트렌드 해쉬태그 가져오기
+usa.trends <- getTrends(23424977)
+usa.trends[,1]
+
+#특정 유저의 타임라인에 있는 트위터 가져오기
+datacamp.com <- userTimeline('datacamp', n=200)
+datacamp.df <- twListToDF(datacamp.com)
+head(datacamp.df)
