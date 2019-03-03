@@ -1,4 +1,7 @@
 ####Chapter 8. The OpenNLP project
+#                      (natural language processing)
+
+#openNLP의 역할: 모든 문장의 속성들을 구분하여 각각의 개체(entity)로 만들고 객체가 어떤 역할을 하는지 지정
 
 options(stringsAsFactors = FALSE)
 Sys.setlocale('LC_ALL', "C")
@@ -52,9 +55,10 @@ word.token.annotator <- Maxent_Word_Token_Annotator(language = 'en')   #단어 �
 pos.tag.annotator <- Maxent_POS_Tag_Annotator(language = "en")   #품사 식별
 
 #apply annotation models to a pos.tag.annotator, persons, 
-                              single email - 세번째 이메일에 적용
+#single email - 세번째 이메일에 적용
 annotations <- annotate(all.emails[[3]], list(sent.token.annotator, word.token.annotator,
-                                                              locations, organizations))
+                                              pos.tag.annotator, persons,
+                                              locations, organizations))
 
 #만들어진 list형태의 annatation object를 data.frame화
 ann.df <- as.data.frame(annotations)[,2:5] #불필요한 id열은 없앰
@@ -68,7 +72,7 @@ for (i in 1:nrow(ann.df)) anno.chars[i] <-
 ann.df$words <- anno.chars
 
 #각 feature에 따라 나눠보기
-subset(ann.df$words, grepl("*person", ann.df$features)==TRUE)
+subset(ann.df$words, grepl("*person", ann.df$features)==TRUE)  #grep: 모든 행에 해당 단어를 포함하는지 T/F를 출력.
 subset(ann.df$words, grepl("*location", ann.df$features)==TRUE)
 subset(ann.df$words, grepl("*organization", ann.df$features)==TRUE)
 #수정이 필요한 데이터를 발견할 수 있음.
@@ -100,20 +104,20 @@ ner.pipeline <- list(
 all.ner <- pblapply(all.emails, annotate.entities, ner.pipeline)
 
 #extract information
-all.ner <- pluck(all.ner, "annotations") #pluck함수: 이름/인덱스로 목록 요소 추출.
+all.ner <- pluck(all.ner, "annotations") #pluck함수: 이름/인덱스로 목록 요소 추출. - 메일에서 각 주석목록을 전부 선택함.
 all.ner <- pblapply(all.ner, as.data.frame)
 all.ner[[3]][244:250,] #시작,끝점만 알 수 있고 어떤 단어인지는 나오지 않음.
 
-#각 인자에 함수를 적용한 후 이를 반환함.
+#map function: 각 인자에 함수를 적용한 후 이를 반환함.
+#cbind를 이용하여 dataframe을 만듦.
 #이메일(tex)에서 entity 시작점부터 끝점까지를 선택하면 단어가 출력됨.
 all.ner <- Map(function(tex, fea, id)  cbind(fea, entity=substring(tex, fea$start, fea$end),
-                                           file=id), all.emails, all.ner, temp)
+                                             file=id), all.emails, all.ner, temp)
 
 all.ner[[3]][244:250,]
 
 #create a unified entity dataframe
-all.ner <- do.call(rbind, all.ner) #do.call: 함수를 계속 호출하는 함수 
-                           #=> rbind를 계속 호술해서 551개 메일의 주석목록을 하나의 df로 통합함.
+all.ner <- do.call(rbind, all.ner) #do.call: 함수를 계속 호출하는 함수 => rbind를 계속 호술해서 551개 메일의 주석목록을 하나의 df로 통합함.
 all.ner$features <- unlist(as.character(all.ner$features))
 
 #해당 feature가 들어간 인덱스를 뽑아서 all.ner에서 해당 인덱스를 불러들임.
@@ -123,12 +127,12 @@ all.org <- all.ner[grep("organization", all.ner$features),]
 
 #analyzing the named entities
 uni.loc <- unique(all.loc$entity)
-uni.loc <- all.loc[firstobs(~entity, data=all.loc),]
+uni.loc <- all.loc[firstobs(~entity, data=all.loc),] #firstobs: 해당 벡터 내에서 유일한 값을 갖는 첫번째 값의 위치 반환
 orgs <- as.matrix(table(as.factor(all.org$entity)))
-orgs[216:220,1]
-
 orgs <- orgs[order(orgs[,1], decreasing = TRUE),]
-side.margins <- par(mar=c(11,2,1,1)+0.3)
+head(orgs)
+
+side.margins <- par(mar=c(11,2,1,1)+0.3) #par:그래픽 모양 조절함수. mar: margin(그래프 여백)
 barplot(orgs[1:20], las=2)
 
 
